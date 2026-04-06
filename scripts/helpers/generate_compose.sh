@@ -1,19 +1,18 @@
 #!/bin/bash
 
-# Helper script to generate per-database docker-compose.yml files
+# Helper script to generate per-database docker-compose.yml files from databases.env
 # This is called by db_manager.sh
 
-# Get the project root (parent of helpers directory)
+# Project root (scripts/helpers -> scripts -> project root)
 HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "${HELPER_DIR}/.." && pwd)"
-CENTRAL_ENV="${SCRIPT_DIR}/databases.env"
-# Use supabase/docker as template if supabase-project doesn't exist
-if [ -d "${SCRIPT_DIR}/supabase-project" ]; then
-    TEMPLATE_DIR="${SCRIPT_DIR}/supabase-project"
-elif [ -d "${SCRIPT_DIR}/supabase/docker" ]; then
-    TEMPLATE_DIR="${SCRIPT_DIR}/supabase/docker"
+ROOT="${CONTAINER_PROJECT_ROOT:-$(cd "${HELPER_DIR}/../.." && pwd)}"
+CENTRAL_ENV="${ROOT}/databases.env"
+if [ -d "${ROOT}/supabase-project" ]; then
+    TEMPLATE_DIR="${ROOT}/supabase-project"
+elif [ -d "${ROOT}/supabase/docker" ]; then
+    TEMPLATE_DIR="${ROOT}/supabase/docker"
 else
-    TEMPLATE_DIR="${SCRIPT_DIR}/supabase-project"
+    TEMPLATE_DIR="${ROOT}/supabase-project"
     echo "Warning: Template directory not found. Using supabase/docker if available."
 fi
 
@@ -27,9 +26,6 @@ source <(grep -E "^[A-Z_]+=" "$CENTRAL_ENV" | grep -v "^#")
 
 # Check if full services mode (default: lean)
 FULL_SERVICES="${1:-lean}"
-
-# Optional: generate for specific database only
-TARGET_DB="${2:-}"
 
 # Function to generate compose file for a single database
 generate_db_compose() {
@@ -45,16 +41,15 @@ generate_db_compose() {
     local anon_key="${10}"
     local service_key="${11}"
     local studio_port="${12}"
-    local db_mode="${13:-full}"
     
-    local db_dir="${SCRIPT_DIR}/databases/${db_name}"
+    local db_dir="${ROOT}/databases/${db_name}"
     local compose_file="${db_dir}/docker-compose.yml"
     
-    # Ensure directory exists
+    # Create database directory if it doesn't exist
     mkdir -p "$db_dir"
     
     # Use template directory volumes if it exists
-    local volumes_path="${TEMPLATE_DIR}/volumes"
+    volumes_path="${TEMPLATE_DIR}/volumes"
     
     cat > "$compose_file" << EOF
 # Auto-generated docker-compose.yml for ${db_name}
@@ -108,18 +103,9 @@ services:
       - log_min_messages=fatal
 EOF
 
-    # Add vector dependency only in full mode (use service_started instead of healthy since vector healthcheck can be flaky)
-    if [ "$db_mode" = "full" ]; then
-        cat >> "$compose_file" << EOF
-    depends_on:
-      ${db_name}-vector:
-        condition: service_started
-EOF
-    fi
+    # Skip vector dependency to avoid blocking DB startup
+    # Vector can start independently without blocking core services
 
-    # Kong entrypoint command with proper escaping
-    local kong_entrypoint_cmd="bash -c 'eval \"echo \\\"\$(cat ~/temp.yml)\\\"\" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'"
-    
     cat >> "$compose_file" << EOF
 
   ${db_name}-kong:
@@ -140,7 +126,8 @@ EOF
       SUPABASE_SERVICE_KEY: ${service_key}
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-supabase}
-    entrypoint: ${kong_entrypoint_cmd}
+    # Render templated kong.yml then start Kong (cat runs inside the container)
+    entrypoint: bash -c 'eval "echo \"\$\$(cat ~/temp.yml)\"" > ~/kong.yml && /docker-entrypoint.sh kong docker-start'
     depends_on:
       ${db_name}-db:
         condition: service_healthy
@@ -154,10 +141,10 @@ EOF
       GOTRUE_API_PORT: 9999
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${postgres_pass}@${db_name}-db:5432/postgres
-      GOTRUE_SITE_URL: http://localhost:${studio_port}
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
       API_EXTERNAL_URL: http://localhost:${kong_http_port}
       GOTRUE_JWT_SECRET: ${jwt_secret}
-      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
     depends_on:
       ${db_name}-db:
         condition: service_healthy
@@ -168,7 +155,7 @@ EOF
     restart: unless-stopped
     environment:
       PGRST_DB_URI: postgres://authenticator:${postgres_pass}@${db_name}-db:5432/postgres
-      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_SCHEMAS: ${PGRST_DB_SCHEMAS:-public,storage,graphql_public}
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${jwt_secret}
     depends_on:
@@ -198,12 +185,12 @@ EOF
     environment:
       HOSTNAME: "::"
       STUDIO_PG_META_URL: http://${db_name}-meta:8080
-      POSTGRES_PORT: ${postgres_port}
+      POSTGRES_PORT: 5432
       POSTGRES_HOST: ${db_name}-db
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: ${postgres_pass}
-      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
-      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION}
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY:-}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-Default Organization}
       DEFAULT_PROJECT_NAME: ${db_name}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SUPABASE_URL: http://${db_name}-kong:8000
@@ -211,9 +198,9 @@ EOF
       SUPABASE_ANON_KEY: ${anon_key}
       SUPABASE_SERVICE_KEY: ${service_key}
       AUTH_JWT_SECRET: ${jwt_secret}
-      LOGFLARE_API_KEY: ${LOGFLARE_PUBLIC_ACCESS_TOKEN}
-      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN}
-      LOGFLARE_PRIVATE_ACCESS_TOKEN: ${LOGFLARE_PRIVATE_ACCESS_TOKEN}
+      LOGFLARE_API_KEY: ${LOGFLARE_PUBLIC_ACCESS_TOKEN:-}
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN:-}
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: ${LOGFLARE_PRIVATE_ACCESS_TOKEN:-}
       LOGFLARE_URL: http://${db_name}-analytics:4000
       NEXT_PUBLIC_ENABLE_LOGS: true
       NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
@@ -232,7 +219,7 @@ EOF
       PG_META_DB_NAME: postgres
       PG_META_DB_USER: supabase_admin
       PG_META_DB_PASSWORD: ${postgres_pass}
-      CRYPTO_KEY: ${PG_META_CRYPTO_KEY}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY:-}
 
   ${db_name}-analytics:
     container_name: ${db_name}-analytics
@@ -259,8 +246,8 @@ EOF
       DB_PORT: 5432
       DB_PASSWORD: ${postgres_pass}
       DB_SCHEMA: _analytics
-      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN}
-      LOGFLARE_PRIVATE_ACCESS_TOKEN: ${LOGFLARE_PRIVATE_ACCESS_TOKEN}
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN:-}
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: ${LOGFLARE_PRIVATE_ACCESS_TOKEN:-}
       LOGFLARE_SINGLE_TENANT: true
       LOGFLARE_SUPABASE_MODE: true
       POSTGRES_BACKEND_URL: postgresql://supabase_admin:${postgres_pass}@${db_name}-db:5432/_supabase
@@ -269,8 +256,8 @@ EOF
 
 EOF
 
-    # Add full services only if db_mode=full
-    if [ "$db_mode" = "full" ]; then
+    # Add full services only if FULL_SERVICES=full
+    if [ "$FULL_SERVICES" = "full" ]; then
         cat >> "$compose_file" << EOF
 
   ${db_name}-realtime:
@@ -308,7 +295,7 @@ EOF
       DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
       DB_ENC_KEY: supabaserealtime
       API_JWT_SECRET: ${jwt_secret}
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
       ERL_AFLAGS: -proto_dist inet_tcp
       DNS_NODES: "''"
       RLIMIT_NOFILE: "10000"
@@ -377,7 +364,7 @@ EOF
       IMGPROXY_BIND: ":5001"
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
       IMGPROXY_USE_ETAG: "true"
-      IMGPROXY_ENABLE_WEBP_DETECTION: ${IMGPROXY_ENABLE_WEBP_DETECTION}
+      IMGPROXY_ENABLE_WEBP_DETECTION: ${IMGPROXY_ENABLE_WEBP_DETECTION:-}
 
   ${db_name}-functions:
     container_name: ${db_name}-edge-functions
@@ -394,7 +381,7 @@ EOF
       SUPABASE_ANON_KEY: ${anon_key}
       SUPABASE_SERVICE_ROLE_KEY: ${service_key}
       SUPABASE_DB_URL: postgresql://postgres:${postgres_pass}@${db_name}-db:5432/postgres
-      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT}"
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-}"
     command:
       [
         "start",
@@ -423,7 +410,7 @@ EOF
       interval: 5s
       retries: 3
     environment:
-      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN:-your-super-secret-and-long-logflare-key-public}
+      LOGFLARE_PUBLIC_ACCESS_TOKEN: ${LOGFLARE_PUBLIC_ACCESS_TOKEN:-}
     command:
       [
         "--config",
@@ -466,8 +453,8 @@ EOF
       POSTGRES_PASSWORD: ${postgres_pass}
       DATABASE_URL: ecto://supabase_admin:${postgres_pass}@${db_name}-db:5432/_supabase
       CLUSTER_POSTGRES: true
-      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}
-      VAULT_ENC_KEY: ${VAULT_ENC_KEY:-your-encryption-key-32-chars-min}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-}
+      VAULT_ENC_KEY: ${VAULT_ENC_KEY:-}
       API_JWT_SECRET: ${jwt_secret}
       METRICS_JWT_SECRET: ${jwt_secret}
       REGION: local
@@ -481,7 +468,7 @@ EOF
       [
         "/bin/sh",
         "-c",
-        "/app/bin/migrate && /app/bin/supavisor eval \"\$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
+        "/app/bin/migrate && /app/bin/supavisor eval \"\$\$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
       ]
 
 EOF
@@ -496,10 +483,11 @@ volumes:
 
 EOF
 
-    echo "Generated docker-compose.yml for ${db_name}"
+    echo "Generated compose file for ${db_name}: ${compose_file}"
 }
 
-# Generate compose files for all databases or specific database
+# Generate services for each database
+# Calculate studio port starting from 3000
 studio_port_base=3000
 db_index=0
 
@@ -510,24 +498,11 @@ while IFS='|' read -r db_name postgres_port kong_http_port kong_https_port poole
     [[ "$db_name" =~ = ]] && break
     [[ "$db_name" == "DASHBOARD_USERNAME" ]] && break
     
-    # If TARGET_DB is set, only generate for that database
-    if [ -n "$TARGET_DB" ] && [ "$db_name" != "$TARGET_DB" ]; then
-        ((db_index++))
-        continue
-    fi
-    
     studio_port=$((studio_port_base + db_index))
-    
-    # Determine if this database needs full services
-    db_dir="${SCRIPT_DIR}/databases/${db_name}"
-    db_mode="$FULL_SERVICES"
-    if [ -f "${db_dir}/.env" ] && grep -q "FULL mode" "${db_dir}/.env" 2>/dev/null; then
-        db_mode="full"
-    fi
-    
-    generate_db_compose "$db_name" "$postgres_port" "$kong_http_port" "$kong_https_port" "$pooler_port" "$cpu_limit" "$memory_limit" "$postgres_pass" "$jwt_secret" "$anon_key" "$service_key" "$studio_port" "$db_mode"
-    
     ((db_index++))
+    
+    generate_db_compose "$db_name" "$postgres_port" "$kong_http_port" "$kong_https_port" "$pooler_port" "$cpu_limit" "$memory_limit" "$postgres_pass" "$jwt_secret" "$anon_key" "$service_key" "$studio_port"
+    
 done < "$CENTRAL_ENV"
 
-echo "docker-compose.yml files generated successfully"
+echo "docker-compose.yml files generated successfully for all databases"

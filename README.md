@@ -57,8 +57,8 @@ cd supabase-docker-manager
 # Copy the example configuration
 cp databases.env.example databases.env
 
-# Make the script executable
-chmod +x db_manager.sh
+# Make scripts executable (run once)
+chmod +x db_manager.sh container_manager.sh scripts/*.sh scripts/helpers/*.sh test/run_all.sh test/*/run.sh test/*/test_*.sh
 ```
 
 ### Your First Database
@@ -81,6 +81,47 @@ chmod +x db_manager.sh
 ```
 
 That's it! Your database is running at `http://localhost:8000` (or the assigned port).
+
+### Central container manager (DB + Redis + LiveKit + MinIO + Elasticsearch + Meilisearch)
+
+One script manages **Supabase databases**, **Redis**, **LiveKit**, **MinIO**, **Elasticsearch**, and **Meilisearch** with a shared port registry (no port conflicts):
+
+```bash
+# Databases (same as db_manager.sh)
+./container_manager.sh db add my-db
+./container_manager.sh db start my-db
+
+# Redis
+./container_manager.sh redis add cache1
+./container_manager.sh redis start cache1
+
+# LiveKit
+./container_manager.sh livekit add my-livekit
+./container_manager.sh livekit start my-livekit
+
+# MinIO (S3-compatible object storage)
+./container_manager.sh minio add my-minio
+./container_manager.sh minio start my-minio
+
+# Elasticsearch
+./container_manager.sh elasticsearch add my-es
+./container_manager.sh elasticsearch start my-es
+
+# Meilisearch (search engine)
+./container_manager.sh meilisearch add my-search
+./container_manager.sh meilisearch start my-search
+
+# Show all ports and the registry
+./container_manager.sh show-ports
+
+# Where credentials live per service
+./container_manager.sh show-credentials
+
+# Check for port conflicts
+./container_manager.sh validate-ports
+```
+
+See **[CONFIG.md](CONFIG.md)** for credentials layout and how port/domain conflicts are avoided.
 
 ---
 
@@ -118,18 +159,31 @@ That's it! Your database is running at `http://localhost:8000` (or the assigned 
 ## 🏗️ Architecture
 
 ```
-supabase-docker-manager/
-├── db_manager.sh              # Main management script (the only one you need!)
-├── databases.env              # Central configuration (not tracked in git)
-├── databases.env.example       # Example configuration template
-├── docker-compose.yml         # Auto-generated (DO NOT EDIT)
-├── helpers/                   # Helper scripts (auto-called by db_manager.sh)
-│   ├── generate_compose.sh   # Generates docker-compose.yml
-│   ├── detect_changes.sh      # Detects config changes
-│   └── ...
-└── databases/                 # Database directories (not tracked in git)
-    ├── my-db/                 # Individual database configs
-    └── ...
+project root/
+├── container_manager.sh       # Entry for db + redis + livekit (recommended)
+├── db_manager.sh              # Database-only entry (same commands as before)
+├── databases.env              # Supabase config (not in git)
+├── redis.env                  # Redis instances config
+├── livekit.env                # LiveKit instances config
+├── minio.env                  # MinIO instances config
+├── elasticsearch.env          # Elasticsearch instances config
+├── meilisearch.env            # Meilisearch instances config
+├── port_registry.env          # Allocated ports (no conflicts)
+├── CONFIG.md                  # Credentials and port-conflict docs
+├── scripts/                   # All management logic
+│   ├── db_manager.sh
+│   ├── redis_manager.sh
+│   ├── livekit_manager.sh
+│   ├── credentials_summary.sh
+│   ├── validate_ports.sh
+│   └── helpers/               # Compose generators, port_allocator
+├── helpers/                   # Legacy helpers (detect_changes, etc.)
+├── databases/                 # One dir per Supabase DB; each has .env + compose
+├── redis/                     # One dir per Redis instance; each has .env + compose
+├── livekit/                   # One dir per LiveKit instance; each has .env + compose
+├── minio/                     # One dir per MinIO instance; each has .env + compose
+├── elasticsearch/             # One dir per Elasticsearch instance; each has .env + compose
+└── meilisearch/               # One dir per Meilisearch instance; each has .env + compose
 ```
 
 ### How It Works
@@ -283,6 +337,14 @@ docker compose up -d
 
 ```bash
 ./db_manager.sh validate
+./container_manager.sh validate-ports   # check for port conflicts
+```
+
+### Running tests
+
+```bash
+./test/run_all.sh                       # run all area tests
+./test/port_allocator/run.sh            # run port-allocator tests only
 ```
 
 ### View Logs

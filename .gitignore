@@ -1,13 +1,29 @@
-# Database directories - ignore contents but keep folder structure
+# Per-instance service data (generated compose, .env, volumes metadata) — not in git
 databases/*
 !databases/.gitkeep
+redis/*
+!redis/.gitkeep
+livekit/*
+!livekit/.gitkeep
+minio/*
+!minio/.gitkeep
+elasticsearch/*
+!elasticsearch/.gitkeep
+meilisearch/*
+!meilisearch/.gitkeep
 
 # Auto-generated files
 docker-compose.yml
 .databases.env.hash
 
-# Sensitive configuration
+# Sensitive configuration (central lists + port registry)
 databases.env
+redis.env
+livekit.env
+minio.env
+elasticsearch.env
+meilisearch.env
+port_registry.env
 
 # OS files
 .DS_Store

@@ -1,0 +1,2 @@
+# One subfolder per LiveKit instance (e.g. livekit/my-app/ with docker-compose.yml, livekit.yaml, .env).
+# Add via: ./container_manager.sh livekit add <name>

@@ -1,0 +1,2 @@
+# One subfolder per Redis instance (e.g. redis/cache1/ with docker-compose.yml and .env).
+# Add via: ./container_manager.sh redis add <name>

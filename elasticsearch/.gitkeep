@@ -1,0 +1,2 @@
+# One subfolder per Elasticsearch instance (docker-compose.yml and .env).
+# Add via: ./container_manager.sh elasticsearch add <name>
