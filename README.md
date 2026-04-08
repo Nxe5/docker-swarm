@@ -49,10 +49,14 @@ Perfect for:
 
 ### Installation
 
+The **`supabase/`** directory is a [git submodule](https://git-scm.com/book/en/v2/Git-Tools-Submodules) pointing at the official [supabase/supabase](https://github.com/supabase/supabase) repo. It supplies `supabase/docker` (and related files) used as templates when generating database compose files. **Clone with submodules** so that folder is populated:
+
 ```bash
-# Clone the repository
-git clone <your-repo-url>
+git clone --recurse-submodules <your-repo-url>
 cd supabase-docker-manager
+
+# If you cloned without --recurse-submodules, run:
+#   git submodule update --init --recursive
 
 # Copy the example configuration
 cp databases.env.example databases.env
